@@ -10,6 +10,17 @@ class Database:
     async def create_tables(self):
         """Создает необходимые таблицы в базе данных"""
         async with aiosqlite.connect(self.db_name) as db:
+            # Таблица пользователей
+            await db.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                city TEXT NOT NULL,
+                is_admin BOOLEAN NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            
             # Таблица заведений
             await db.execute('''
             CREATE TABLE IF NOT EXISTS places (
@@ -17,6 +28,7 @@ class Database:
                 name TEXT NOT NULL,
                 address TEXT NOT NULL,
                 category TEXT NOT NULL,
+                city TEXT NOT NULL,
                 photo_id TEXT,
                 admin_comment TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -65,15 +77,75 @@ class Database:
             
             await db.commit()
     
-    async def add_place(self, name: str, address: str, category: str, 
+    async def add_user(self, user_id: int, username: Optional[str], city: str) -> int:
+        """Добавляет или обновляет пользователя в базе данных"""
+        async with aiosqlite.connect(self.db_name) as db:
+            # Проверяем, существует ли пользователь
+            cursor = await db.execute('SELECT user_id, is_admin FROM users WHERE user_id = ?', (user_id,))
+            existing_user = await cursor.fetchone()
+            
+            if existing_user:
+                # Обновляем существующего пользователя, но сохраняем статус администратора
+                is_admin = existing_user[1]
+                await db.execute('''
+                UPDATE users SET username = ?, city = ? WHERE user_id = ?
+                ''', (username, city, user_id))
+            else:
+                # Добавляем нового пользователя
+                await db.execute('''
+                INSERT INTO users (user_id, username, city, is_admin) VALUES (?, ?, ?, 0)
+                ''', (user_id, username, city))
+            
+            await db.commit()
+            return user_id
+    
+    async def set_admin_status(self, user_id: int, is_admin: bool) -> bool:
+        """Устанавливает статус администратора для пользователя (только для ручного вызова)"""
+        async with aiosqlite.connect(self.db_name) as db:
+            # Проверяем, существует ли пользователь
+            cursor = await db.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
+            existing_user = await cursor.fetchone()
+            
+            if not existing_user:
+                return False
+            
+            # Обновляем статус администратора
+            await db.execute('''
+            UPDATE users SET is_admin = ? WHERE user_id = ?
+            ''', (1 if is_admin else 0, user_id))
+            
+            await db.commit()
+            return True
+    
+    async def is_admin(self, user_id: int) -> bool:
+        """Проверяет, является ли пользователь администратором"""
+        async with aiosqlite.connect(self.db_name) as db:
+            cursor = await db.execute('''
+            SELECT is_admin FROM users WHERE user_id = ?
+            ''', (user_id,))
+            
+            row = await cursor.fetchone()
+            return bool(row and row[0])
+    
+    async def get_user_city(self, user_id: int) -> Optional[str]:
+        """Получает город пользователя"""
+        async with aiosqlite.connect(self.db_name) as db:
+            cursor = await db.execute('''
+            SELECT city FROM users WHERE user_id = ?
+            ''', (user_id,))
+            
+            row = await cursor.fetchone()
+            return row[0] if row else None
+    
+    async def add_place(self, name: str, address: str, category: str, city: str,
                         photo_id: Optional[str] = None, 
                         admin_comment: Optional[str] = None) -> int:
         """Добавляет новое заведение в базу данных"""
         async with aiosqlite.connect(self.db_name) as db:
             cursor = await db.execute('''
-            INSERT INTO places (name, address, category, photo_id, admin_comment)
-            VALUES (?, ?, ?, ?, ?)
-            ''', (name, address, category, photo_id, admin_comment))
+            INSERT INTO places (name, address, category, city, photo_id, admin_comment)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''', (name, address, category, city, photo_id, admin_comment))
             
             await db.commit()
             return cursor.lastrowid
@@ -126,11 +198,12 @@ class Database:
             await db.commit()
             return cursor.lastrowid
     
-    async def get_business_lunches(self, limit: int = 10, offset: int = 0, weekday: Optional[int] = None) -> List[Dict[str, Any]]:
+    async def get_business_lunches(self, city: str, limit: int = 10, offset: int = 0, weekday: Optional[int] = None) -> List[Dict[str, Any]]:
         """
         Получает список заведений с бизнес-ланчами
         
         Args:
+            city: Город
             limit: Ограничение количества результатов
             offset: Смещение для пагинации
             weekday: Конкретный день недели (1-7) или None для текущего дня
@@ -142,15 +215,15 @@ class Database:
         async with aiosqlite.connect(self.db_name) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute('''
-            SELECT p.id, p.name, p.address, p.photo_id, p.admin_comment,
+            SELECT p.id, p.name, p.address, p.city, p.photo_id, p.admin_comment,
                    bl.price, bl.start_time, bl.end_time, bl.description, bl.weekday
             FROM places p
             JOIN business_lunches bl ON p.id = bl.place_id
-            WHERE bl.weekday = ? OR bl.weekday = 0
+            WHERE (bl.weekday = ? OR bl.weekday = 0) AND p.city = ?
             GROUP BY p.id
             ORDER BY p.name
             LIMIT ? OFFSET ?
-            ''', (weekday, limit, offset))
+            ''', (weekday, city, limit, offset))
             
             rows = await cursor.fetchall()
             result = []
@@ -158,18 +231,18 @@ class Database:
                 result.append(dict(row))
             return result
     
-    async def search_places_by_menu(self, query: str, limit: int = 10, offset: int = 0) -> List[Dict[str, Any]]:
+    async def search_places_by_menu(self, query: str, city: str, limit: int = 10, offset: int = 0) -> List[Dict[str, Any]]:
         """Поиск заведений по позициям меню"""
         async with aiosqlite.connect(self.db_name) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute('''
-            SELECT DISTINCT p.id, p.name, p.address, p.photo_id, p.admin_comment
+            SELECT DISTINCT p.id, p.name, p.address, p.city, p.photo_id, p.admin_comment
             FROM places p
             JOIN menu_items mi ON p.id = mi.place_id
-            WHERE mi.name LIKE ? OR mi.category LIKE ?
+            WHERE (mi.name LIKE ? OR mi.category LIKE ?) AND p.city = ?
             ORDER BY p.name
             LIMIT ? OFFSET ?
-            ''', (f'%{query}%', f'%{query}%', limit, offset))
+            ''', (f'%{query}%', f'%{query}%', city, limit, offset))
             
             rows = await cursor.fetchall()
             result = []
@@ -283,11 +356,12 @@ class Database:
                 result.append(dict(row))
             return result
     
-    async def count_business_lunches(self, weekday: Optional[int] = None) -> int:
+    async def count_business_lunches(self, city: str, weekday: Optional[int] = None) -> int:
         """
         Подсчитывает общее количество заведений с бизнес-ланчами
         
         Args:
+            city: Город
             weekday: День недели (1-7) или None для текущего дня
         """
         # Если weekday не указан, используем текущий день недели
@@ -299,24 +373,40 @@ class Database:
             SELECT COUNT(DISTINCT p.id)
             FROM places p
             JOIN business_lunches bl ON p.id = bl.place_id
-            WHERE bl.weekday = ? OR bl.weekday = 0
-            ''', (weekday,))
+            WHERE (bl.weekday = ? OR bl.weekday = 0) AND p.city = ?
+            ''', (weekday, city))
             
             count = await cursor.fetchone()
             return count[0] if count else 0
     
-    async def count_search_results(self, query: str) -> int:
+    async def count_search_results(self, query: str, city: str) -> int:
         """Подсчитывает количество результатов поиска"""
         async with aiosqlite.connect(self.db_name) as db:
             cursor = await db.execute('''
             SELECT COUNT(DISTINCT p.id)
             FROM places p
             JOIN menu_items mi ON p.id = mi.place_id
-            WHERE mi.name LIKE ? OR mi.category LIKE ?
-            ''', (f'%{query}%', f'%{query}%'))
+            WHERE (mi.name LIKE ? OR mi.category LIKE ?) AND p.city = ?
+            ''', (f'%{query}%', f'%{query}%', city))
             
             count = await cursor.fetchone()
             return count[0] if count else 0
+    
+    async def get_places_for_admin(self, city: str) -> List[Dict[str, Any]]:
+        """Получает список всех заведений для администратора"""
+        async with aiosqlite.connect(self.db_name) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute('''
+            SELECT * FROM places
+            WHERE city = ?
+            ORDER BY name
+            ''', (city,))
+            
+            rows = await cursor.fetchall()
+            result = []
+            for row in rows:
+                result.append(dict(row))
+            return result
     
     def _get_weekday_name(self, weekday: int) -> str:
         """Возвращает название дня недели по его номеру"""
@@ -330,4 +420,32 @@ class Database:
             6: "Суббота",
             7: "Воскресенье"
         }
-        return weekdays.get(weekday, "Неизвестный день") 
+        return weekdays.get(weekday, "Неизвестный день")
+    
+    async def get_menu_categories_by_place_id(self, place_id: int) -> List[str]:
+        """Получает список уникальных категорий меню заведения"""
+        async with aiosqlite.connect(self.db_name) as db:
+            cursor = await db.execute('''
+            SELECT DISTINCT category FROM menu_items
+            WHERE place_id = ?
+            ORDER BY category
+            ''', (place_id,))
+            
+            rows = await cursor.fetchall()
+            return [row[0] for row in rows] if rows else []
+
+    async def get_menu_items_by_category(self, place_id: int, category: str) -> List[Dict[str, Any]]:
+        """Получает позиции меню заведения по категории"""
+        async with aiosqlite.connect(self.db_name) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute('''
+            SELECT * FROM menu_items
+            WHERE place_id = ? AND category = ?
+            ORDER BY name
+            ''', (place_id, category))
+            
+            rows = await cursor.fetchall()
+            result = []
+            for row in rows:
+                result.append(dict(row))
+            return result 

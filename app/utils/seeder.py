@@ -10,14 +10,26 @@ async def seed_database():
     db = Database(os.getenv("DATABASE_NAME", "lunch_hunter.db"))
     await db.create_tables()
     
+    # Добавляем тестовых пользователей
+    print("Добавление тестовых пользователей...")
+    await db.add_user(user_id=123456789, username="admin_user", city="Липецк")
+    # Устанавливаем статус администратора
+    await db.set_admin_status(user_id=123456789, is_admin=True)
+    print("Пользователь admin_user назначен администратором")
+    
+    await db.add_user(user_id=987654321, username="test_user1", city="Липецк")
+    await db.add_user(user_id=555555555, username="test_user2", city="Ковров")
+    await db.add_user(user_id=777777777, username="test_user3", city="Ковров")
+    
     # Добавляем тестовые заведения
-    print("Добавление тестовых заведений...")
+    print("Добавление тестовых заведений в Липецке...")
     
     # 1. Ресторан с бизнес-ланчем (разные ланчи по дням недели)
     place1_id = await db.add_place(
         name="Ресторан 'Вкусно и точка'",
         address="ул. Примерная, 10",
         category="ресторан",
+        city="Липецк",
         admin_comment="Уютное место с отличным обслуживанием, бизнес-ланчи каждый день разные"
     )
     
@@ -93,6 +105,7 @@ async def seed_database():
         name="Кафе 'У Петровича'",
         address="пр. Ленина, 42",
         category="кафе",
+        city="Липецк",
         admin_comment="Недорогое заведение с домашней кухней, бизнес-ланч одинаковый каждый день"
     )
     
@@ -127,6 +140,7 @@ async def seed_database():
         name="Кальянная 'Дымок'",
         address="ул. Революции, 15",
         category="кальянная",
+        city="Липецк",
         admin_comment="Атмосферное место для отдыха с друзьями, особые бизнес-ланчи по выходным"
     )
     
@@ -168,11 +182,14 @@ async def seed_database():
         description="Кальян на ягодных вкусах"
     )
     
+    print("Добавление тестовых заведений в Коврове...")
+    
     # 4. Пивной ресторан без бизнес-ланча
     place4_id = await db.add_place(
         name="Пивной ресторан 'Хмель'",
         address="ул. Барная, 7",
         category="пивной ресторан",
+        city="Ковров",
         admin_comment="Большой выбор пива и закусок"
     )
     
@@ -205,6 +222,7 @@ async def seed_database():
         name="Lounge bar 'Облако'",
         address="ул. Комсомольская, 23",
         category="кальянная",
+        city="Ковров",
         admin_comment="Модное место с приятной атмосферой и качественными кальянами"
     )
     
@@ -237,6 +255,7 @@ async def seed_database():
         name="Ресторан 'Маэстро'",
         address="пр. Победы, 112",
         category="ресторан",
+        city="Ковров",
         admin_comment="Ресторан итальянской кухни с живой музыкой по вечерам и бизнес-ланчем ежедневно"
     )
     
@@ -278,14 +297,20 @@ async def seed_database():
     # Отзывы для второго ресторана
     await db.add_review(user_id=123456789, place_id=place2_id, rating=3, 
                        comment="Неплохо за свои деньги")
-    await db.add_review(user_id=555555555, place_id=place2_id, rating=5, 
+    await db.add_review(user_id=987654321, place_id=place2_id, rating=5, 
                        comment="Очень вкусно и по-домашнему")
     
     # Отзывы для кальянной
     await db.add_review(user_id=777777777, place_id=place3_id, rating=5, 
                        comment="Лучшие кальяны в городе!")
-    await db.add_review(user_id=888888888, place_id=place3_id, rating=4, 
+    await db.add_review(user_id=555555555, place_id=place3_id, rating=4, 
                        comment="Хорошие кальяны, приятная атмосфера")
+    
+    # Отзывы для заведений в Коврове
+    await db.add_review(user_id=555555555, place_id=place4_id, rating=5, 
+                       comment="Отличное пиво, вкусные закуски")
+    await db.add_review(user_id=777777777, place_id=place5_id, rating=4, 
+                       comment="Приятная атмосфера, но немного дороговато")
     
     print("База данных успешно заполнена тестовыми данными!")
 

@@ -1,7 +1,37 @@
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types import InlineKeyboardButton
+from aiogram.types import InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+
+def get_city_selection_keyboard():
+    """Клавиатура для выбора города"""
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(
+        InlineKeyboardButton(text="Липецк", callback_data="city:Липецк"),
+        width=1
+    )
+    builder.row(
+        InlineKeyboardButton(text="Ковров", callback_data="city:Ковров"),
+        width=1
+    )
+    
+    return builder.as_markup()
+
+def get_admin_city_selection_keyboard():
+    """Клавиатура для выбора города при добавлении заведения"""
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(
+        InlineKeyboardButton(text="Липецк", callback_data="admin_city:Липецк"),
+        width=1
+    )
+    builder.row(
+        InlineKeyboardButton(text="Ковров", callback_data="admin_city:Ковров"),
+        width=1
+    )
+    
+    return builder.as_markup()
 
 def get_start_keyboard():
     """Клавиатура для стартового меню"""
@@ -17,6 +47,10 @@ def get_start_keyboard():
     )
     builder.row(
         InlineKeyboardButton(text="💨 Кальяны", callback_data="hookah"),
+        width=1
+    )
+    builder.row(
+        InlineKeyboardButton(text="🏙️ Изменить город", callback_data="change_city"),
         width=1
     )
     
@@ -49,6 +83,15 @@ def get_place_details_keyboard(place_id: int, has_route: bool = True):
         InlineKeyboardButton(
             text="📝 Посмотреть все отзывы",
             callback_data=f"all_reviews:{place_id}"
+        ),
+        width=1
+    )
+    
+    # Добавляем кнопку для просмотра категорий меню
+    builder.row(
+        InlineKeyboardButton(
+            text="🍽️ Категории меню",
+            callback_data=f"menu_categories:{place_id}"
         ),
         width=1
     )
@@ -229,7 +272,7 @@ def get_full_place_details_keyboard(place_id: int, page: int, total_pages: int, 
     nav_buttons = []
     
     if page > 1:
-        builder.add(
+        nav_buttons.append(
             InlineKeyboardButton(
                 text="« Пред. заведение",
                 callback_data=f"{callback_prefix}:{page - 1}{weekday_param}"
@@ -237,14 +280,15 @@ def get_full_place_details_keyboard(place_id: int, page: int, total_pages: int, 
         )
     
     if page < total_pages:
-        builder.add(
+        nav_buttons.append(
             InlineKeyboardButton(
                 text="След. заведение »",
                 callback_data=f"{callback_prefix}:{page + 1}{weekday_param}"
             )
         )
     
-    builder.adjust(2)
+    # builder.adjust(2)
+    builder.row(*nav_buttons)
     
     # Добавляем кнопки дней недели, если не передан конкретный день
     if weekday is None:
@@ -343,6 +387,210 @@ def get_back_to_place_keyboard(place_id: int):
     """Клавиатура для возврата к информации о заведении"""
     builder = InlineKeyboardBuilder()
     
+    builder.row(
+        InlineKeyboardButton(
+            text="« Назад к заведению",
+            callback_data=f"place:{place_id}"
+        ),
+        width=1
+    )
+    
+    return builder.as_markup()
+
+def get_places_pagination_keyboard(places: List[dict], page: int, total_pages: int, 
+                                  callback_prefix: str, items_per_page: int = 5):
+    """
+    Клавиатура для выбора заведения с пагинацией для административных команд
+    
+    Args:
+        places: Список заведений
+        page: Текущая страница
+        total_pages: Общее количество страниц
+        callback_prefix: Префикс для callback_data ('admin_lunch' или 'admin_menu')
+        items_per_page: Количество элементов на странице
+    """
+    builder = InlineKeyboardBuilder()
+    
+    # Вычисляем индексы начала и конца для текущей страницы
+    start_idx = (page - 1) * items_per_page
+    end_idx = min(start_idx + items_per_page, len(places))
+    
+    # Отображаем заведения на текущей странице
+    for i, place in enumerate(places[start_idx:end_idx], start_idx + 1):
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{place['name']} ({place['address']})",
+                callback_data=f"{callback_prefix}:{place['id']}"
+            ),
+            width=1
+        )
+    
+    # Добавляем навигационные кнопки
+    navigation_buttons = []
+    
+    if page > 1:
+        navigation_buttons.append(
+            InlineKeyboardButton(
+                text="« Пред.",
+                callback_data=f"{callback_prefix}_page:{page - 1}"
+            )
+        )
+    
+    navigation_buttons.append(
+        InlineKeyboardButton(
+            text=f"📄 {page}/{total_pages}",
+            callback_data="pagination_info"
+        )
+    )
+    
+    if page < total_pages:
+        navigation_buttons.append(
+            InlineKeyboardButton(
+                text="След. »",
+                callback_data=f"{callback_prefix}_page:{page + 1}"
+            )
+        )
+    
+    builder.row(*navigation_buttons)
+    
+    # Добавляем кнопку отмены
+    builder.row(
+        InlineKeyboardButton(
+            text="❌ Отмена",
+            callback_data="cancel_admin"
+        ),
+        width=1
+    )
+    
+    return builder.as_markup()
+
+def get_menu_search_pagination_keyboard(places: List[dict], page: int, total_pages: int, query: str, place_id: int):
+    """
+    Клавиатура для пагинации при поиске по меню
+    
+    Args:
+        places: Список заведений
+        page: Текущая страница
+        total_pages: Общее количество страниц
+        query: Поисковый запрос
+        place_id: ID текущего заведения
+    """
+    builder = InlineKeyboardBuilder()
+    
+    # Добавляем кнопки для просмотра всех позиций по запросу и всех категорий меню
+    builder.row(
+        InlineKeyboardButton(
+            text="📋 Все позиции по запросу",
+            callback_data=f"menu_all_items:{place_id}:{query}"
+        ),
+        width=1
+    )
+    
+    builder.row(
+        InlineKeyboardButton(
+            text="🔍 Категории меню",
+            callback_data=f"menu_categories:{place_id}"
+        ),
+        width=1
+    )
+    
+    builder.row(
+        InlineKeyboardButton(
+            text="📋 Подробнее о заведении",
+            callback_data=f"place:{place_id}"
+        ),
+        width=1
+    )
+    
+    # Добавляем навигационные кнопки между заведениями
+    nav_buttons = []
+    
+    if page > 1:
+        nav_buttons.append(
+            InlineKeyboardButton(
+                text="« Пред. заведение",
+                callback_data=f"menu_search_page:{query}:{page - 1}"
+            )
+        )
+    
+    nav_buttons.append(
+        InlineKeyboardButton(
+            text=f"{page}/{total_pages}",
+            callback_data="pagination_info"
+        )
+    )
+    
+    if page < total_pages:
+        nav_buttons.append(
+            InlineKeyboardButton(
+                text="След. заведение »",
+                callback_data=f"menu_search_page:{query}:{page + 1}"
+            )
+        )
+    
+    builder.row(*nav_buttons)
+    
+    # Кнопка возврата в главное меню
+    builder.row(
+        InlineKeyboardButton(
+            text="« Главное меню",
+            callback_data="start"
+        ),
+        width=1
+    )
+    
+    return builder.as_markup()
+
+def get_menu_categories_keyboard(place_id: int, categories: List[str]):
+    """
+    Клавиатура для отображения категорий меню заведения
+    
+    Args:
+        place_id: ID заведения
+        categories: Список категорий
+    """
+    builder = InlineKeyboardBuilder()
+    
+    for category in categories:
+        builder.row(
+            InlineKeyboardButton(
+                text=category,
+                callback_data=f"menu_category:{place_id}:{category}"
+            ),
+            width=1
+        )
+    
+    # Кнопка возврата к заведению
+    builder.row(
+        InlineKeyboardButton(
+            text="« Назад к заведению",
+            callback_data=f"place:{place_id}"
+        ),
+        width=1
+    )
+    
+    return builder.as_markup()
+
+def get_menu_items_by_category_keyboard(place_id: int, category: str):
+    """
+    Клавиатура для отображения позиций меню по категории
+    
+    Args:
+        place_id: ID заведения
+        category: Категория меню
+    """
+    builder = InlineKeyboardBuilder()
+    
+    # Кнопка возврата к списку категорий
+    builder.row(
+        InlineKeyboardButton(
+            text="« Назад к категориям",
+            callback_data=f"menu_categories:{place_id}"
+        ),
+        width=1
+    )
+    
+    # Кнопка возврата к заведению
     builder.row(
         InlineKeyboardButton(
             text="« Назад к заведению",

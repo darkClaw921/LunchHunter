@@ -21,15 +21,27 @@ async def callback_business_lunch(callback: CallbackQuery):
     """Обработчик кнопки 'Бизнес-ланчи'"""
     db = Database()
     
+    # Получаем город пользователя
+    user_id = callback.from_user.id
+    city = await db.get_user_city(user_id)
+    
+    if not city:
+        await callback.message.edit_text(
+            "Пожалуйста, сначала выберите город, используя команду /start.",
+            reply_markup=get_start_keyboard()
+        )
+        await callback.answer()
+        return
+    
     # Получаем текущий день недели
     current_weekday = datetime.now().isoweekday()  # 1-7 (пн-вс)
     
     # Получаем количество заведений с бизнес-ланчами на текущий день
-    total = await db.count_business_lunches(weekday=current_weekday)
+    total = await db.count_business_lunches(city, weekday=current_weekday)
     
     if total == 0:
         await callback.message.edit_text(
-            f"К сожалению, заведений с бизнес-ланчами на {_get_weekday_name(current_weekday)} пока нет в базе.",
+            f"К сожалению, заведений с бизнес-ланчами в городе {city} на {_get_weekday_name(current_weekday)} пока нет в базе.",
             reply_markup=get_start_keyboard()
         )
         await callback.answer()
@@ -41,7 +53,7 @@ async def callback_business_lunch(callback: CallbackQuery):
     total_pages = math.ceil(total / per_page)
     offset = (page - 1) * per_page
     
-    places = await db.get_business_lunches(limit=per_page, offset=offset, weekday=current_weekday)
+    places = await db.get_business_lunches(city, limit=per_page, offset=offset, weekday=current_weekday)
     
     if not places:
         await callback.message.edit_text(
@@ -60,7 +72,8 @@ async def callback_business_lunch(callback: CallbackQuery):
     # Формируем полный текст с информацией о заведении
     text = f"🍽️ *Бизнес-ланч на {_get_weekday_name(current_weekday)}*\n\n"
     text += f"*{place['name']}*\n"
-    text += f"📍 *Адрес:* {place['address']}\n\n"
+    text += f"📍 *Адрес:* {place['address']}\n"
+    text += f"🏙️ *Город:* {place['city']}\n\n"
     text += f"🍽️ *Бизнес-ланч:*\n"
     text += f"💰 Цена: {place['price']} руб.\n"
     text += f"⏰ Время: {place['start_time']} - {place['end_time']}\n"
@@ -98,15 +111,27 @@ async def callback_business_lunch_page(callback: CallbackQuery):
     
     db = Database()
     
+    # Получаем город пользователя
+    user_id = callback.from_user.id
+    city = await db.get_user_city(user_id)
+    
+    if not city:
+        await callback.message.edit_text(
+            "Пожалуйста, сначала выберите город, используя команду /start.",
+            reply_markup=get_start_keyboard()
+        )
+        await callback.answer()
+        return
+    
     # Получаем количество заведений с бизнес-ланчами
-    total = await db.count_business_lunches(weekday=weekday)
+    total = await db.count_business_lunches(city, weekday=weekday)
     
     # Получаем запрошенную страницу результатов
     per_page = 1  # Показываем по одному заведению на странице
     total_pages = math.ceil(total / per_page)
     offset = (page - 1) * per_page
     
-    places = await db.get_business_lunches(limit=per_page, offset=offset, weekday=weekday)
+    places = await db.get_business_lunches(city, limit=per_page, offset=offset, weekday=weekday)
     
     if not places:
         await callback.message.edit_text(
@@ -125,7 +150,8 @@ async def callback_business_lunch_page(callback: CallbackQuery):
     # Формируем полный текст с информацией о заведении
     text = f"🍽️ *Бизнес-ланч на {_get_weekday_name(weekday)}*\n\n"
     text += f"*{place['name']}*\n"
-    text += f"📍 *Адрес:* {place['address']}\n\n"
+    text += f"📍 *Адрес:* {place['address']}\n"
+    text += f"🏙️ *Город:* {place['city']}\n\n"
     text += f"🍽️ *Бизнес-ланч:*\n"
     text += f"💰 Цена: {place['price']} руб.\n"
     text += f"⏰ Время: {place['start_time']} - {place['end_time']}\n"

@@ -18,7 +18,11 @@ async def callback_hookah(callback: CallbackQuery):
     # Для кальянов используем ту же логику, что и для бизнес-ланчей,
     # но ищем заведения с категорией "кальян"
     query = "кальян"
-    total = await db.count_search_results(query)
+    # Получаем город пользователя
+    user_id = callback.from_user.id
+    db = Database()
+    city = await db.get_user_city(user_id)
+    total = await db.count_search_results(query, city)
     
     if total == 0:
         await callback.message.edit_text(
@@ -34,7 +38,7 @@ async def callback_hookah(callback: CallbackQuery):
     total_pages = math.ceil(total / per_page)
     offset = (page - 1) * per_page
     
-    places = await db.search_places_by_menu(query, limit=per_page, offset=offset)
+    places = await db.search_places_by_menu(query,city=city, limit=per_page, offset=offset)
     
     if not places:
         await callback.message.edit_text(
@@ -95,14 +99,16 @@ async def callback_hookah_page(callback: CallbackQuery):
     page = int(parts[2])
     
     db = Database()
-    total = await db.count_search_results(query)
+    user_id = callback.from_user.id
+    city = await db.get_user_city(user_id)
+    total = await db.count_search_results(query, city)
     
     # Получаем запрошенную страницу результатов
     per_page = 1  # Показываем по одному заведению на странице
     total_pages = math.ceil(total / per_page)
     offset = (page - 1) * per_page
     
-    places = await db.search_places_by_menu(query, limit=per_page, offset=offset)
+    places = await db.search_places_by_menu(query, city=city, limit=per_page, offset=offset)
     
     if not places:
         await callback.message.edit_text(

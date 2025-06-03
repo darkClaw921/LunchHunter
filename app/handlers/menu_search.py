@@ -7,7 +7,11 @@ from app.database import Database
 from app.keyboards import (
     get_search_results_keyboard, 
     get_start_keyboard, 
-    get_full_place_details_keyboard
+    get_full_place_details_keyboard,
+    get_menu_search_pagination_keyboard,
+    get_menu_categories_keyboard,
+    get_menu_items_by_category_keyboard,
+    get_back_to_place_keyboard
 )
 import math
 
@@ -42,9 +46,21 @@ async def process_menu_search(message: Message, state: FSMContext):
     # Сохраняем запрос в состоянии
     await state.update_data(query=query)
     
-    # Выполняем поиск
+    # Получаем город пользователя
+    user_id = message.from_user.id
     db = Database()
-    total = await db.count_search_results(query)
+    city = await db.get_user_city(user_id)
+    
+    if not city:
+        await message.answer(
+            "Пожалуйста, сначала выберите город с помощью команды /start.",
+            reply_markup=get_start_keyboard()
+        )
+        await state.clear()
+        return
+    
+    # Выполняем поиск
+    total = await db.count_search_results(query, city)
     
     if total == 0:
         await message.answer(
@@ -61,7 +77,7 @@ async def process_menu_search(message: Message, state: FSMContext):
     total_pages = math.ceil(total / per_page)
     offset = (page - 1) * per_page
     
-    places = await db.search_places_by_menu(query, limit=per_page, offset=offset)
+    places = await db.search_places_by_menu(query, city, limit=per_page, offset=offset)
     
     if not places:
         await message.answer(
@@ -105,8 +121,8 @@ async def process_menu_search(message: Message, state: FSMContext):
     
     await message.answer(
         text,
-        reply_markup=get_full_place_details_keyboard(
-            place_id, page, total_pages, f"menu_search_page:{query}"
+        reply_markup=get_menu_search_pagination_keyboard(
+            places, page, total_pages, query, place_id
         ),
         parse_mode="Markdown"
     )
@@ -122,15 +138,27 @@ async def callback_menu_search_page(callback: CallbackQuery):
     query = parts[1]
     page = int(parts[2])
     
+    # Получаем город пользователя
+    user_id = callback.from_user.id
     db = Database()
-    total = await db.count_search_results(query)
+    city = await db.get_user_city(user_id)
+    
+    if not city:
+        await callback.message.edit_text(
+            "Пожалуйста, сначала выберите город с помощью команды /start.",
+            reply_markup=get_start_keyboard()
+        )
+        await callback.answer()
+        return
+    
+    total = await db.count_search_results(query, city)
     
     # Получаем запрошенную страницу результатов
     per_page = 1  # Показываем по одному заведению на странице
     total_pages = math.ceil(total / per_page)
     offset = (page - 1) * per_page
     
-    places = await db.search_places_by_menu(query, limit=per_page, offset=offset)
+    places = await db.search_places_by_menu(query, city, limit=per_page, offset=offset)
     
     if not places:
         await callback.message.edit_text(
@@ -174,9 +202,132 @@ async def callback_menu_search_page(callback: CallbackQuery):
     
     await callback.message.edit_text(
         text,
-        reply_markup=get_full_place_details_keyboard(
-            place_id, page, total_pages, f"menu_search_page:{query}"
+        reply_markup=get_menu_search_pagination_keyboard(
+            places, page, total_pages, query, place_id
         ),
+        parse_mode="Markdown"
+    )
+    
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("menu_all_items:"))
+async def callback_menu_all_items(callback: CallbackQuery):
+    """Обработчик для просмотра всех позиций меню по запросу"""
+    # Формат: menu_all_items:place_id:query
+    parts = callback.data.split(":")
+    place_id = int(parts[1])
+    query = parts[2]
+    
+    db = Database()
+    
+    # Получаем информацию о заведении
+    place = await db.get_place_by_id(place_id)
+    if not place:
+        await callback.answer("Заведение не найдено", show_alert=True)
+        return
+    
+    # Получаем все позиции меню для заведения
+    menu_items = await db.get_menu_items_by_place_id(place_id)
+    matching_items = [item for item in menu_items if query.lower() in item['name'].lower() or query.lower() in item['category'].lower()]
+    
+    if not matching_items:
+        await callback.answer("Позиции меню не найдены", show_alert=True)
+        return
+    
+    # Формируем текст с информацией о позициях меню
+    text = f"📋 *Все позиции меню по запросу '{query}' в {place['name']}:*\n\n"
+    
+    # Группируем позиции по категориям
+    categories = {}
+    for item in matching_items:
+        category = item['category']
+        if category not in categories:
+            categories[category] = []
+        categories[category].append(item)
+    
+    # Выводим позиции по категориям
+    for category, items in categories.items():
+        text += f"*{category}:*\n"
+        for item in items:
+            desc = f"🗒 {item['description']}" if item['description'] else ""
+            text += f"• *{item['name']}* \n💵{item['price']} руб.\n{desc}\n"
+        text += "\n"
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_back_to_place_keyboard(place_id),
+        parse_mode="Markdown"
+    )
+    
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("menu_categories:"))
+async def callback_menu_categories(callback: CallbackQuery):
+    """Обработчик для просмотра всех категорий меню заведения"""
+    # Формат: menu_categories:place_id
+    parts = callback.data.split(":")
+    place_id = int(parts[1])
+    
+    db = Database()
+    
+    # Получаем информацию о заведении
+    place = await db.get_place_by_id(place_id)
+    if not place:
+        await callback.answer("Заведение не найдено", show_alert=True)
+        return
+    
+    # Получаем все категории меню
+    categories = await db.get_menu_categories_by_place_id(place_id)
+    
+    if not categories:
+        await callback.answer("Категории меню не найдены", show_alert=True)
+        return
+    
+    # Формируем текст с информацией о категориях меню
+    text = f"🔍 *Категории меню в {place['name']}:*\n\n"
+    text += "Выберите категорию для просмотра позиций меню:"
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_menu_categories_keyboard(place_id, categories),
+        parse_mode="Markdown"
+    )
+    
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("menu_category:"))
+async def callback_menu_category(callback: CallbackQuery):
+    """Обработчик для просмотра позиций меню по категории"""
+    # Формат: menu_category:place_id:category
+    parts = callback.data.split(":")
+    place_id = int(parts[1])
+    category = parts[2]
+    
+    db = Database()
+    
+    # Получаем информацию о заведении
+    place = await db.get_place_by_id(place_id)
+    if not place:
+        await callback.answer("Заведение не найдено", show_alert=True)
+        return
+    
+    # Получаем позиции меню по категории
+    menu_items = await db.get_menu_items_by_category(place_id, category)
+    
+    if not menu_items:
+        await callback.answer("Позиции меню не найдены", show_alert=True)
+        return
+    
+    # Формируем текст с информацией о позициях меню
+    text = f"📋 *{category} в {place['name']}:*\n\n"
+    
+    for item in menu_items:
+        desc = f"🗒 {item['description']}" if item['description'] else ""
+        text += f"• *{item['name']}* \n💵{item['price']} руб.\n{desc}\n"
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_menu_items_by_category_keyboard(place_id, category),
         parse_mode="Markdown"
     )
     
